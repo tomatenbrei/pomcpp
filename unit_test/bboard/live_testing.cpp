@@ -157,7 +157,7 @@ TEST_CASE("Test Simple Agent", "[live testing]")
 
 TEST_CASE("SimpleAgent Win Rate Stats", "[stats info]")
 {
-    int numGames = 2000;
+    int numGames = 5000;
 
     int seed = 42;
     std::mt19937 rng(seed);

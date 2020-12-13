@@ -6,6 +6,8 @@
 using namespace bboard;
 using namespace bboard::strategy;
 
+//#define DEBUG_SIMPLEAGENT
+
 namespace agents
 {
 
@@ -45,19 +47,30 @@ bool _HasRPLoop(SimpleAgent& me)
     return true;
 }
 
-Move _MoveSafeOneSpace(SimpleAgent& me, const State* state)
+Move _SampleFromMoveQueue(SimpleAgent& me, const State* state, bool avoidRecent)
 {
-    const AgentInfo& a = state->agents[me.id];
-    me.moveQueue.count = 0;
-    SafeDirections(*state, me.moveQueue, a.x, a.y);
-    SortDirections(me.moveQueue, me.recentPositions, a.x, a.y);
-
-    if(me.moveQueue.count == 0)
+    if (me.moveQueue.count == 0)
+    {
         return Move::IDLE;
+    }
     else
-        return me.moveQueue[me.rng() % std::min(2, me.moveQueue.count)];
+    {
+        const AgentInfo& a = state->agents[me.id];
+        if (avoidRecent)
+        {
+            SortDirections(me.moveQueue, me.recentPositions, a.x, a.y);
+            return me.moveQueue[me.moveQueue.count - 1 - (me.rng() % std::min(2, me.moveQueue.count))];
+        }
+        return me.moveQueue[me.rng() % me.moveQueue.count];
+    }
 }
 
+Move _MoveSafeOneSpace(SimpleAgent& me, const State* state, bool avoidRecent)
+{
+    const AgentInfo& a = state->agents[me.id];
+    SafeDirections(*state, me.moveQueue, a.x, a.y);
+    return _SampleFromMoveQueue(me, state, avoidRecent);
+}
 
 Move _Decide(SimpleAgent& me, const State* state)
 {
@@ -66,50 +79,91 @@ Move _Decide(SimpleAgent& me, const State* state)
 
     me.danger = IsInDanger(*state, me.id);
 
-    if(me.danger > 0) // ignore danger if not too high
+    // first priority: escape danger
+    if(me.danger > 0)
     {
-        Move m = MoveTowardsSafePlace(*state, me.r, me.danger);
-        Position p = util::DesiredPosition(a.x, a.y, m);
-        if(!util::IsOutOfBounds(p.x, p.y) && IS_WALKABLE(state->items[p.y][p.x]) &&
-                _safe_condition(IsInDanger(*state, p.x, p.y), 2))
+#ifdef DEBUG_SIMPLEAGENT
+        std::cout << me.id << ": escape danger" << std::endl;
+#endif
+        MoveTowardsSafePlace(*state, me.r, me.danger, me.moveQueue, me.danger);
+        if (me.moveQueue.count > 0)
         {
-            return m;
+            return _SampleFromMoveQueue(me, state, true);
+        }
+        else
+        {
+            // we found no better place.. just idle to check if things get better
+            if(_HasRPLoop(me))
+            {
+                // if we are stuck idling, try to break out with random movement
+                return Move(1 + me.rng() % 4);
+            }
+            else
+            {
+                return Move::IDLE;
+            }
         }
     }
+    // second priority: move to enemies and place bombs
     else if(a.bombCount < a.maxBombCount)
     {
-        //prioritize enemy destruction
-        if(IsAdjacentEnemy(*state, me.id, 1))
+#ifdef DEBUG_SIMPLEAGENT
+        std::cout << me.id << ": enemies & bombs" << std::endl;
+#endif
+
+        // try to destroy enemies
+        if(IsAdjacentEnemy(*state, me.id, 2))
         {
+#ifdef DEBUG_SIMPLEAGENT
+            std::cout << "> Enemy" << std::endl;
+#endif
             return Move::BOMB;
         }
 
-        if(IsAdjacentEnemy(*state, me.id, 7))
-        {
-            // if you're stuck in a loop try to break out by randomly selecting
-            // an action ( we could IDLE but the mirroring of agents is tricky)
-            if(_HasRPLoop(me)) {
-                return Move(me.rng() % 5);
-            }
-
-            Move m = MoveTowardsEnemy(*state, me.r, 7);
-            Position p = util::DesiredPosition(a.x, a.y, m);
-            if(!util::IsOutOfBounds(p.x, p.y) && IS_WALKABLE(state->items[p.y][p.x]) &&
-                    _safe_condition(IsInDanger(*state, p.x, p.y), 5))
-            {
-                return m;
-            }
-        }
-
+        // destroy wood
         if(IsAdjacentItem(*state, me.id, 1, Item::WOOD))
         {
+#ifdef DEBUG_SIMPLEAGENT
+            std::cout << "> Wood" << std::endl;
+#endif
             return Move::BOMB;
+        }
+
+        // move towards enemies
+
+        // if you're stuck in a loop try to break out by randomly selecting
+        // a (safe) action
+        if(_HasRPLoop(me)) {
+#ifdef DEBUG_SIMPLEAGENT
+            std::cout << "> RL Loop" << std::endl;
+#endif
+            return _MoveSafeOneSpace(me, state, false);
+        }
+
+        MoveTowardsEnemy(*state, me.r, 7, me.moveQueue);
+        if (me.moveQueue.count > 0)
+        {
+#ifdef DEBUG_SIMPLEAGENT
+            std::cout << "> Move towards enemy" << std::endl;
+#endif
+            return _SampleFromMoveQueue(me, state, false);
+        }
+    }
+    // third priority: select powerups
+    else {
+#ifdef DEBUG_SIMPLEAGENT
+        std::cout << me.id << ": powerups" << std::endl;
+#endif
+
+        MoveTowardsPowerup(*state, me.r, 2, me.moveQueue);
+        if(me.moveQueue.count > 0)
+        {
+            return _SampleFromMoveQueue(me, state, false);
         }
     }
 
-    // TODO: Collect powerups
-
-    return _MoveSafeOneSpace(me, state);
+    // if that did not work, just move somewhere
+    return _MoveSafeOneSpace(me, state, true);
 }
 
 Move SimpleAgent::act(const State* state)

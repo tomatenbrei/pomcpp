@@ -85,37 +85,39 @@ bool IsAdjacentItem(const State& state, int agentID, int distance, Item item);
 Move MoveTowardsPosition(const RMap& r, const Position& position);
 
 /**
- * @brief MoveTowardsSafePlace Returns the direction towards one
- * of the closest points from the source that is safe from explosions.
+ * @brief MoveTowardsSafePlace Puts the directions towards the closest points
+ * from the source that are safe from explosions into q.
  * (In the given radius). Note: Doesn't guarantee that the agent doesn't
  * die along the way by other dangers. Only considers the imminent danger
  * in his current position.
  *
+ * @param state The current state
  * @param r The filled RMap
  * @param radius The search radius
- * @return IDLE if no safe place could be found
+ * @param q The queue which will be filled with the safe actions (can be empty).
+ * @param dangerThreshold The added moves must have a higher danger value than dangerThreshold (-1 to ignore).
  */
-Move MoveTowardsSafePlace(const State& state, const RMap& r, int radius);
+void MoveTowardsSafePlace(const State& state, const RMap& r, int radius, FixedQueue<Move, MOVE_COUNT>& q, int dangerThreshold);
 
 /**
- * @brief MoveTowardsPowerup Returns the move that brings the agent
- * closer to a powerup in a specified radius. If no nearby powerup is
- * in that radius, then don't the move is IDLE
+ * @brief MoveTowardsPowerup Puts the moves that brings the agent
+ * closer to a powerup in a specified radius.
  * @param r A filled map with all information about distances and
  * paths. See bboard::strategy::RMap for more info
  * @param radius Maximum search distance (manhattan)
+ * @param q The queue which will be filled with the movement actions (can be empty).
  */
-Move MoveTowardsPowerup(const State& state, const RMap& r, int radius);
+void MoveTowardsPowerup(const State& state, const RMap& r, int radius, FixedQueue<Move, MOVE_COUNT>& q);
 
 /**
- * @brief MoveTowardsEnemy Returns the move that brings the agent
- * closer to an enemy in a specified radius. If no nearby enemy is
- * in that radius, then default to IDLE
+ * @brief MoveTowardsEnemy Puts the moves that bring the agent
+ * closer to the closest enemy in a specified radius.
  * @param r A filled map with all information about distances and
  * paths. See bboard::strategy::RMap for more info
  * @param radius Maximum search distance (manhattan)
+ * @param q The queue which will be filled with the movement actions (can be empty).
  */
-Move MoveTowardsEnemy(const State& state, const RMap& r, int radius);
+void MoveTowardsEnemy(const State& state, const RMap& r, int radius, FixedQueue<Move, MOVE_COUNT>& q);
 
 /**
  * @brief FilterSafeDirections Adds all possible safe moves to the
@@ -125,27 +127,51 @@ void SafeDirections(const State& state, FixedQueue<Move, MOVE_COUNT>& q, int x, 
 
 /**
  * @brief SortDirections Sort a move-queue, where unvisited states are
- * last in the queue
+ * last in the queue.
  */
 template <int X>
 void SortDirections(FixedQueue<Move, MOVE_COUNT>& q,
                     FixedQueue<Position, X>& p, int x, int y)
 {
     int moves = q.count;
+    int movedMoves = 0;
 
-    for(int i = 0, totalSteps = 0; totalSteps < moves; i++, totalSteps++)
+    // p is a FIFO => new positions are at the end
+    for(int j = p.count - 1; j >= 0; j--)
     {
-        Position pos = util::DesiredPosition(x, y, q[i]);
-        for(int j = 0; j < p.count; j++)
+        bool found = false;
+
+        for(int i = 0; i < moves - movedMoves; i++)
         {
-            if(pos == p[j])
+            if(util::DesiredPosition(x, y, q[i]) == p[j])
             {
+                // we found a position we already visited
+                // => move it to the end
+                // as we start at the end of the positions fifo,
+                // positions we recently visited will eventually
+                // move towards the front of the queue
+                Move qM = q[i];
                 q.RemoveAt(i);
-                q.AddElem(q[i]);
-                i--;
+                q.AddElem(qM);
+                found = true;
                 break;
             }
         }
+
+        if(found)
+        {
+            movedMoves++;
+            if(movedMoves == moves)
+            {
+                break;
+            }
+        }
+    }
+
+    for(int i = 0; i < moves - movedMoves; i++)
+    {
+        // move unvisited destinations to the end
+        q.AddElem(q.PopElem());
     }
 }
 

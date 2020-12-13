@@ -167,6 +167,21 @@ struct FixedQueue
     }
 
     /**
+     * @brief AddElemFirst Adds an element at the beginning of the queue
+     * @param elem The element which should be added
+     */
+    void AddElemFirst(const T& elem)
+    {
+        // move the index one to the left
+        index = (index + (TSize - 1)) % TSize;
+
+        // add the element at the beginning
+        queue[index] = elem;
+
+        count++;
+    }
+
+    /**
      * @brief RemoveAt Removes an element at a specified index
      * Highly discouraged! Only use if necessary
      */

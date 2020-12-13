@@ -146,8 +146,11 @@ TEST_CASE("Move Towards Methods", "[strategy]")
 
         strategy::FillRMap(*s.get(), r, 0);
 
-        Move m1 = strategy::MoveTowardsPowerup(*s.get(), r, 2);
-        Move m2 = strategy::MoveTowardsPowerup(*s.get(), r, 3);
+        FixedQueue<Move, MOVE_COUNT> q;
+        strategy::MoveTowardsPowerup(*s.get(), r, 2, q);
+        Move m1 = q.count == 0 ? Move::IDLE : q[0];
+        strategy::MoveTowardsPowerup(*s.get(), r, 3, q);
+        Move m2 = q.count == 0 ? Move::IDLE : q[0];
 
         REQUIRE(m1 == Move::IDLE);
         REQUIRE(m2 == Move::DOWN);
@@ -160,8 +163,11 @@ TEST_CASE("Move Towards Methods", "[strategy]")
 
         strategy::FillRMap(*s.get(), r, 0);
 
-        Move m1 = strategy::MoveTowardsEnemy(*s.get(), r, 2);
-        Move m2 = strategy::MoveTowardsEnemy(*s.get(), r, 3);
+        FixedQueue<Move, MOVE_COUNT> q;
+        strategy::MoveTowardsEnemy(*s.get(), r, 2, q);
+        Move m1 = q.count == 0 ? Move::IDLE : q[0];
+        strategy::MoveTowardsEnemy(*s.get(), r, 3, q);
+        Move m2 = q.count == 0 ? Move::IDLE : q[0];
 
         REQUIRE(m1 == Move::IDLE);
         REQUIRE(m2 == Move::DOWN);

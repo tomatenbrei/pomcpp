@@ -57,6 +57,7 @@ inline RMapInfo TryAdd(const State& s, FixedQueue<T, N>& q, RMap& r, Position& c
 // BFS
 void FillRMap(const State& s, RMap& r, int agentID)
 {
+    // TODO: Use max?
     std::fill(r.map[0], r.map[0] + BOARD_SIZE * BOARD_SIZE, 0);
     int x = s.agents[agentID].x;
     int y = s.agents[agentID].y;
@@ -119,28 +120,80 @@ Move MoveTowardsPosition(const RMap& r, const Position& position)
     }
 }
 
-Move MoveTowardsSafePlace(const State& state, const RMap& r, int radius)
+template <typename T, int size>
+inline void _addUnique(FixedQueue<T, size>& q, T elem)
 {
-    int originX = r.source.x;
-    int originY = r.source.y;
-    for(int y = originY - radius; y < radius; y++)
+    for(int i = 0; i < q.count; i++)
     {
-        for(int x = originX - radius; x < radius; x++)
+        if(q[i] == elem)
+            break;
+    }
+
+    q.AddElem(elem);
+}
+
+void MoveTowardsSafePlace(const State& state, const RMap& r, int radius, FixedQueue<Move, MOVE_COUNT>& q, int dangerThreshold)
+{
+    q.count = 0;
+    const Position& a = r.source;
+
+    int maxTargetDanger = 1;
+    for(int y = a.y - radius; y <= a.y + radius; y++)
+    {
+        for(int x = a.x - radius; x <= a.x + radius; x++)
         {
             if(util::IsOutOfBounds({x, y}) ||
-                    std::abs(x - originX) + std::abs(y - originY) > radius) continue;
+                    std::abs(x - a.x) + std::abs(y - a.y) > radius) continue;
 
-            if(r.GetDistance(x, y) != 0 && _safe_condition(IsInDanger(state, x, y)))
+            int dist = r.GetDistance(x, y);
+            // ignore unreachable positions and the origin
+            if(dist != 0)
             {
-                return MoveTowardsPosition(r, {x, y});
+                bool potentialNewBest = false;
+                int targetDanger = IsInDanger(state, x, y);
+                if (_safe_condition(targetDanger, dist + 1)
+                        // only try moving when the destination seems promising
+                        && (targetDanger == 0 || (targetDanger > dangerThreshold && targetDanger >= maxTargetDanger)))
+                {
+                    if (maxTargetDanger == 0)
+                    {
+                        // only add if targetDanger is also 0
+                        if (targetDanger != 0)
+                        {
+                            continue;
+                        }
+                    }
+                    if (targetDanger == 0 || targetDanger > maxTargetDanger)
+                    {
+                        // we found a better destination!
+                        potentialNewBest = true;
+                    }
+                    // maxTargetDanger != 0 and they are the same => just add it
+
+                    Move m = MoveTowardsPosition(r, {x, y});
+                    Position p = util::DesiredPosition(a.x, a.y, m);
+
+                    int directDanger = IsInDanger(state, p.x, p.y);
+                    if (_safe_condition(directDanger))
+                    {
+                        if (potentialNewBest)
+                        {
+                            q.count = 0;
+                            maxTargetDanger = targetDanger;
+                        }
+
+                        _addUnique(q, m);
+                    }
+                }
             }
         }
     }
-    return Move::IDLE;
 }
 
-Move MoveTowardsPowerup(const State& state, const RMap& r, int radius)
+void MoveTowardsPowerup(const State& state, const RMap& r, int radius, FixedQueue<Move, MOVE_COUNT>& q)
 {
+    q.count = 0;
+    int minDist = std::numeric_limits<int>::max();
     const Position& a = r.source;
     for(int y = a.y - radius; y <= a.y + radius; y++)
     {
@@ -151,37 +204,56 @@ Move MoveTowardsPowerup(const State& state, const RMap& r, int radius)
 
             if(IS_POWERUP(state.items[y][x]))
             {
-                return MoveTowardsPosition(r, {x, y});
+                int dist = r.GetDistance(x, y);
+                if (dist != 0 && dist <= minDist)
+                {
+                    Move m = MoveTowardsPosition(r, {x, y});
+                    Position p = util::DesiredPosition(a.x, a.y, m);
+
+                    if(!_safe_condition(IsInDanger(state, p.x, p.y)))
+                    {
+                        continue;
+                    }
+
+                    if(dist < minDist)
+                    {
+                        q.count = 0;
+                        minDist = dist;
+                    }
+
+                    _addUnique(q, m);
+                }
             }
         }
     }
-
-    return Move::IDLE;
 }
 
-Move MoveTowardsEnemy(const State& state, const RMap& r, int radius)
+void MoveTowardsEnemy(const State& state, const RMap& r, int radius, FixedQueue<Move, MOVE_COUNT>& q)
 {
+    q.count = 0;
     const Position& a = r.source;
 
+    int closestEnemyDistance = bboard::BOARD_SIZE * bboard::BOARD_SIZE + 1;
     for(int i = 0; i < AGENT_COUNT; i++)
     {
         const AgentInfo& inf = state.agents[i];
-
-        if((inf.x == a.x && inf.y == a.y) || inf.dead) continue;
-
         int x = state.agents[i].x;
         int y = state.agents[i].y;
-        if(std::abs(x - a.x) + std::abs(y - a.y) > radius)
-        {
-            continue;
-        }
-        else
-        {
-            return MoveTowardsPosition(r, {x, y});
-        }
 
+        if((x == a.x && y == a.y) || inf.dead) continue;
+
+        int manhattanDist = std::abs(x - a.x) + std::abs(y - a.y);
+        int actualDist = r.GetDistance(x, y);
+        if(manhattanDist <= radius && actualDist <= closestEnemyDistance && _safe_condition(IsInDanger(state, x, y), 5))
+        {
+            if (actualDist < closestEnemyDistance) {
+                q.count = 0;
+                closestEnemyDistance = actualDist;
+            }
+
+            _addUnique(q, MoveTowardsPosition(r, {x, y}));
+        }
     }
-    return Move::IDLE;
 }
 
 bool _CheckPos(const State& state, int x, int y)
@@ -193,31 +265,23 @@ bool _safe_condition(int danger, int min)
 {
     return danger == 0 || danger >= min;
 }
+
+inline void _addSafeDir(const State& state, FixedQueue<Move, MOVE_COUNT>& q, int x, int y, Move m)
+{
+    int d = IsInDanger(state, x, y);
+    if(_CheckPos(state, x, y) && _safe_condition(d))
+    {
+        q.AddElem(m);
+    }
+}
+
 void SafeDirections(const State& state, FixedQueue<Move, MOVE_COUNT>& q, int x, int y)
 {
-    int d = IsInDanger(state, x + 1, y);
-    if(_CheckPos(state, x + 1, y) && _safe_condition(d))
-    {
-        q.AddElem(Move::RIGHT);
-    }
-
-    d = IsInDanger(state, x - 1, y);
-    if(_CheckPos(state, x - 1, y) && _safe_condition(d))
-    {
-        q.AddElem(Move::LEFT);
-    }
-
-    d = IsInDanger(state, x, y + 1);
-    if(_CheckPos(state, x, y + 1) && _safe_condition(d))
-    {
-        q.AddElem(Move::DOWN);
-    }
-
-    d = IsInDanger(state, x, y - 1);
-    if(_CheckPos(state, x, y - 1) && _safe_condition(d))
-    {
-        q.AddElem(Move::UP);
-    }
+    q.count = 0;
+    _addSafeDir(state, q, x + 1, y, Move::RIGHT);
+    _addSafeDir(state, q, x - 1, y, Move::LEFT);
+    _addSafeDir(state, q, x, y + 1, Move::DOWN);
+    _addSafeDir(state, q, x, y - 1, Move::UP);
 }
 
 int IsInDanger(const State& state, int agentID)
